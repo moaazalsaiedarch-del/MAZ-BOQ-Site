@@ -792,9 +792,29 @@ $('xl').onclick=async()=>{
 async function saveFile(name,blob){
   let dl=null;try{if(typeof claude!=='undefined')dl=await claude.use('downloads')}catch(e){}
   if(dl){try{await dl.save({filename:name,data:await blob.arrayBuffer()});note('تم تجهيز الملف: '+name);return}catch(e){if(e&&e.code==='declined')return}}
+  if(await nativeSave(name,blob))return;
   const f=new File([blob],name,{type:blob.type});
   if(isMobile()&&canShareFile(f)){openShare(f,blob,name);return}
   dlBlob(name,blob);
+}
+/* داخل تطبيق Capacitor (iOS/Android) التحميل بالرابط لا يعمل: نكتب الملف ثم نفتح قائمة المشاركة/الحفظ */
+async function nativeSave(name,blob){
+  try{
+    const C=window.Capacitor;
+    if(!C||!(C.isNativePlatform?C.isNativePlatform():false))return false;
+    const FS=C.Plugins&&C.Plugins.Filesystem,SHR=C.Plugins&&C.Plugins.Share;
+    if(!FS||!SHR){note('ثبّت الإضافتين @capacitor/filesystem و @capacitor/share ثم نفّذ npx cap sync.',true);return false}
+    const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(blob)});
+    const safe=name.replace(/[\\/:*?"<>|]/g,'-');
+    const w=await FS.writeFile({path:safe,data:b64,directory:'CACHE'});
+    await SHR.share({title:safe,url:w.uri,dialogTitle:safe});
+    note('تم تجهيز الملف: '+safe);
+    return true;
+  }catch(e){
+    if(e&&/cancel/i.test(String(e.message||e)))return true;
+    note('تعذّر الحفظ: '+((e&&e.message)||e),true);
+    return false;
+  }
 }
 function dlBlob(name,blob){
   const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;a.target='_blank';document.body.appendChild(a);a.click();a.remove();
@@ -837,7 +857,7 @@ async function exportImg(kind,build,tag){
   const d=(build||reportEl)();
   try{
     await (document.fonts&&document.fonts.ready);
-    const sc=Math.min(2,14000/d.offsetHeight);
+    const sc=Math.max(.5,Math.min(2,14000/d.offsetHeight,Math.sqrt(15000000/Math.max(1,d.offsetWidth*d.offsetHeight))));/* حد مساحة الكانفاس في iOS/أندرويد */
     const cv=await html2canvas(d,{scale:sc,backgroundColor:'#ffffff',useCORS:true});
     const base=(tag||'')+(S.name||'حصر-التشطيبات').replace(/[\\/:*?"<>|]/g,'-');
     if(kind==='jpg'){const bl=await new Promise(r=>cv.toBlob(r,'image/jpeg',.92));await saveFile(base+'.jpg',bl);return}
